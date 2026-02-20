@@ -145,3 +145,7 @@ kustomize
 package-lock.json
 src/api/api/agents/writer/.promptflow/
 flow.flex.yaml
+
+# Startup/shutdown script artifacts
+logs/
+.pids/

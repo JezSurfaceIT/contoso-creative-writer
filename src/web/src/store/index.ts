@@ -56,7 +56,7 @@ export const startWritingTask = (
   };
 
   const hostname = window.location.hostname;
-  const apiPort = 8000;
+  const apiPort = 48000;
   
   const endpoint =
     (hostname === 'localhost' || hostname === '127.0.0.1')
@@ -84,7 +84,10 @@ export const startWritingTask = (
           part = part.trim();
           if (!part || part.length === 0) continue;
           // console.log(part);
-          const message = JSON.parse(part) as IMessage;
+          const parsed = JSON.parse(part);
+          // Skip array-format messages (used by evaluate path, not for UI)
+          if (Array.isArray(parsed)) continue;
+          const message = parsed as IMessage;
           addMessage(message);
           if (message.type === "writer") {
             if (message.data && message.data.start) {
