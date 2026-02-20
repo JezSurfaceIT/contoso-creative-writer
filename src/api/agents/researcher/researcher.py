@@ -8,7 +8,8 @@ import prompty.azure
 from prompty.azure.processor import ToolCall
 from prompty.tracer import trace
 from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AzureOpenAI
 from azure.ai.projects.models import BingGroundingTool
 from azure.ai.inference.prompts import PromptTemplate
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_result
@@ -127,8 +128,48 @@ def execute_research(instructions: str, feedback: str = "No feedback"):
         return research
 
 @trace
+def execute_research_fallback(instructions: str, feedback: str = "No feedback"):
+    """Fallback when Bing connection is unavailable. Uses Azure OpenAI chat completions directly."""
+    print("Using fallback researcher (direct Azure OpenAI chat completions)...")
+
+    token_provider = get_bearer_token_provider(
+        DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+    )
+
+    client = AzureOpenAI(
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        azure_ad_token_provider=token_provider,
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
+    )
+
+    prompt_template = PromptTemplate.from_prompty(file_path="researcher.prompty")
+    messages = prompt_template.create_messages(instructions=instructions, feedback=feedback)
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=messages,
+        max_tokens=4000,
+    )
+
+    research_response = response.choices[0].message.content
+    print(f"Fallback research response received.")
+
+    try:
+        json_r = json.loads(research_response)
+        return json_r['web']
+    except (json.JSONDecodeError, KeyError):
+        print(f"Fallback: could not parse JSON, returning raw response")
+        return [{"url": "", "name": "Research Summary", "description": research_response}]
+
+
+@trace
 def research(instructions: str, feedback: str = "No feedback"):
-    r = execute_research(instructions=instructions)
+    try:
+        r = execute_research(instructions=instructions)
+    except Exception as e:
+        print(f"Primary researcher failed: {e}")
+        print("Falling back to non-Bing researcher...")
+        r = execute_research_fallback(instructions=instructions, feedback=feedback)
     research = {
         "web": r,
         "entities": [],

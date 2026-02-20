@@ -67,63 +67,30 @@ def building_agents_message():
 
 @trace
 def create(research_context, product_context, assignment_context, evaluate=True):
-    
+
     feedback = "No Feedback"
 
-    yield building_agents_message()
+    try:
+        yield building_agents_message()
 
-    yield start_message("researcher")
-    research_result = researcher.research(research_context, feedback)
-    yield complete_message("researcher", research_result)
-
-    yield start_message("marketing")
-    product_result = product.find_products(product_context)
-    yield complete_message("marketing", product_result)
-
-    yield start_message("writer")
-    yield complete_message("writer", {"start": True})
-    writer_result = writer.write(
-        research_context,
-        research_result,
-        product_context,
-        product_result,
-        assignment_context,
-        feedback,
-    )
-
-    full_result = " "
-    for item in writer_result:
-        full_result = full_result + f'{item}'
-        yield complete_message("partial", {"text": item})
-
-    processed_writer_result = writer.process(full_result)
-
-    # send article to the designer, to generate an image for the blog
-    # yield start_message("designer")
-    # designer_response = designer.design(processed_writer_result['article'])
-    # yield complete_message("designer", [f"Image stored in {designer_response}"])
-
-    # Then send it to the editor, to decide if it's good or not
-    yield start_message("editor")
-    editor_response = editor.edit(processed_writer_result['article'], processed_writer_result["feedback"])
-
-    yield complete_message("editor", editor_response)
-    yield complete_message("writer", {"complete": True})
-
-    retry_count = 0
-    while(str(editor_response["decision"]).lower().startswith("accept")):
-        yield ("message", f"Sending editor feedback ({retry_count + 1})...")
-
-        # Regenerate with feedback loop
-        researchFeedback = editor_response.get("researchFeedback", "No Feedback")
-        editorFeedback = editor_response.get("editorFeedback", "No Feedback")
-
-        research_result = researcher.research(research_context, researchFeedback)
+        yield start_message("researcher")
+        research_result = researcher.research(research_context, feedback)
         yield complete_message("researcher", research_result)
+
+        yield start_message("marketing")
+        product_result = product.find_products(product_context)
+        yield complete_message("marketing", product_result)
 
         yield start_message("writer")
         yield complete_message("writer", {"start": True})
-        writer_result = writer.write(research_context, research_result, product_context, product_result, assignment_context, editorFeedback)
+        writer_result = writer.write(
+            research_context,
+            research_result,
+            product_context,
+            product_result,
+            assignment_context,
+            feedback,
+        )
 
         full_result = " "
         for item in writer_result:
@@ -132,32 +99,69 @@ def create(research_context, product_context, assignment_context, evaluate=True)
 
         processed_writer_result = writer.process(full_result)
 
+        # send article to the designer, to generate an image for the blog
+        # yield start_message("designer")
+        # designer_response = designer.design(processed_writer_result['article'])
+        # yield complete_message("designer", [f"Image stored in {designer_response}"])
+
         # Then send it to the editor, to decide if it's good or not
         yield start_message("editor")
         editor_response = editor.edit(processed_writer_result['article'], processed_writer_result["feedback"])
 
-        retry_count += 1
-        if retry_count >= 2:
-            break
-
         yield complete_message("editor", editor_response)
         yield complete_message("writer", {"complete": True})
 
-    #these need to be yielded for calling evals from evaluate.evaluate
-    yield send_research(research_result)
-    yield send_products(product_result)
-    yield send_writer(full_result) 
+        retry_count = 0
+        while(str(editor_response["decision"]).lower().startswith("accept")):
+            yield Message(type="message", message=f"Sending editor feedback ({retry_count + 1})...").to_json_line()
 
-    if evaluate:
-        print("Evaluating article...")
-        evaluate_article_in_background(
-            research_context=research_context,
-            product_context=product_context,
-            assignment_context=assignment_context,
-            research=research_result,
-            products=product_result,
-            article=full_result,
-        )
+            # Regenerate with feedback loop
+            researchFeedback = editor_response.get("researchFeedback", "No Feedback")
+            editorFeedback = editor_response.get("editorFeedback", "No Feedback")
+
+            research_result = researcher.research(research_context, researchFeedback)
+            yield complete_message("researcher", research_result)
+
+            yield start_message("writer")
+            yield complete_message("writer", {"start": True})
+            writer_result = writer.write(research_context, research_result, product_context, product_result, assignment_context, editorFeedback)
+
+            full_result = " "
+            for item in writer_result:
+                full_result = full_result + f'{item}'
+                yield complete_message("partial", {"text": item})
+
+            processed_writer_result = writer.process(full_result)
+
+            # Then send it to the editor, to decide if it's good or not
+            yield start_message("editor")
+            editor_response = editor.edit(processed_writer_result['article'], processed_writer_result["feedback"])
+
+            yield complete_message("editor", editor_response)
+            yield complete_message("writer", {"complete": True})
+
+            retry_count += 1
+            if retry_count >= 2:
+                break
+
+        #these need to be yielded for calling evals from evaluate.evaluate
+        yield send_research(research_result)
+        yield send_products(product_result)
+        yield send_writer(full_result)
+
+        if evaluate:
+            print("Evaluating article...")
+            evaluate_article_in_background(
+                research_context=research_context,
+                product_context=product_context,
+                assignment_context=assignment_context,
+                research=research_result,
+                products=product_result,
+                article=full_result,
+            )
+    except Exception as e:
+        logging.error(f"Orchestrator error: {e}")
+        yield error_message(e)
 
 @trace  
 def test_create_article(research_context, product_context, assignment_context):
